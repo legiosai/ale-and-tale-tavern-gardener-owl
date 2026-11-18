@@ -45,16 +45,16 @@ internal static class GameHooks
         private static void Postfix(SaveManager __instance, string gameName, string backupDate, bool __result)
         {
             if (__result)
-                Plugin.World?.LoadRoles(__instance, gameName, backupDate);
+                Plugin.World?.LoadPlots(__instance, gameName, backupDate);
             else
-                Plugin.World?.ResetRoles();
+                Plugin.World?.Reset();
         }
     }
 
     [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.NewGame))]
     internal static class NewWorld
     {
-        private static void Postfix() => Plugin.World?.ResetRoles();
+        private static void Postfix() => Plugin.World?.Reset();
     }
 
     [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.SaveGame), typeof(string))]
@@ -66,7 +66,7 @@ internal static class GameHooks
             HarvesterWorld? world = Plugin.World;
             if (world == null || !HarvesterWorld.IsHost)
                 return;
-            __state = () => world.SaveRoles(__instance, fileName);
+            __state = () => world.SavePlots(__instance, fileName);
             __instance.onGameSaved += __state;
         }
 

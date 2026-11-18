@@ -24,7 +24,7 @@ internal static class GardenerItem
 
     internal static bool IsGardener(Item item) => item.dataId == HarvesterWorld.CleanerHouseItem && item.durability == Marker;
 
-    internal static bool IsGardener(Furniture house) => house != null && house.itemData != null
+    internal static bool IsGardener(Furniture house) => house != null && house.IsSpawned && house.helperHouse != null && house.itemData != null
         && house.itemData.id == HarvesterWorld.CleanerHouseItem && house.itemData.durability == 0
         && house.reliability.Value == Marker;
 

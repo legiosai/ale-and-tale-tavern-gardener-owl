@@ -29,7 +29,7 @@ public sealed partial class ProbePlugin : BaseUnityPlugin
         if (!File.Exists(Path.Combine(Paths.GameRootPath, ".harvester-test-copy")))
             return;
         mode = Environment.GetEnvironmentVariable("GHO_TEST_MODE");
-        if (mode is not ("routes" or "host" or "coop" or "guest" or "reload" or "uninstall" or "controls"
+        if (mode is not ("routes" or "host" or "coop" or "guest" or "reload" or "uninstall"
             or "gardener" or "gardener-reload" or "gardener-uninstall"))
         {
             mode = null;
@@ -60,8 +60,6 @@ public sealed partial class ProbePlugin : BaseUnityPlugin
             return;
         try
         {
-            if (mode == "controls" && Input.GetKeyDown(KeyCode.H))
-                Logger.LogInfo($"PROBE INPUT H down (alt={Input.GetKey(KeyCode.LeftAlt)}, cursor={Cursor.lockState})");
             if (Time.realtimeSinceStartup > abortAt)
                 throw new TimeoutException("World or test operation timed out.");
             if (!started)
@@ -98,7 +96,6 @@ public sealed partial class ProbePlugin : BaseUnityPlugin
                 "guest" => TestGuest().GetEnumerator(),
                 "reload" => TestReload().GetEnumerator(),
                 "uninstall" => TestUninstall().GetEnumerator(),
-                "controls" => TestControls().GetEnumerator(),
                 "gardener" => TestGardener().GetEnumerator(),
                 "gardener-reload" => TestGardenerReload().GetEnumerator(),
                 "gardener-uninstall" => TestGardenerUninstall().GetEnumerator(),
@@ -126,6 +123,8 @@ public sealed partial class ProbePlugin : BaseUnityPlugin
             UipManager.Instance.StartClient("127.0.0.1");
             return;
         }
+        if (mode is "gardener" or "gardener-reload")
+            StageLegacyAssignments();
         if (!SaveManager.Instance.LoadGame(SaveSlot))
             throw new InvalidOperationException("Test fixture could not load.");
         MainMenu.Instance.HostGame(false);

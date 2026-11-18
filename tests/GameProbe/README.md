@@ -10,9 +10,8 @@ Use an independent Proton prefix and a copy of `Ale and Tale Tavern_Data/saves/h
 | `host` | Test driver and production mod | First and last bed, correct yield and rarity, exact-fit and blocked storage, a forced partial write, player race, pause, stalled path, quest exclusion, and two owls harvesting 30 distinct beds. Saves the result. |
 | `reload` | Same tested save and mod profile | Role, crop state and inventory restore, and an older save fingerprint does not adopt the newer assignment. |
 | `uninstall` | Same tested save with the harvester DLL removed | Stock house, owl and collected produce load. |
-| `controls` | Test driver and production mod in an unassigned test world | Aims the in-game crosshair at a real cleaner house and waits for the real role shortcut twice. |
-| `gardener` | Test driver and version 0.2 in a copied world with two stock Cleaner Owl Houses | Merchant unlock, price and purchase, place and pack, green models and labels, hoe strikes, seed consumption, and a saved tilled plot awaiting seeds. |
-| `gardener-reload` | The saved world from `gardener` with the mod installed | Restores the bought house and plants the pending plot when restocked. |
+| `gardener` | Test driver and production mod in a copied world with two stock Cleaner Owl Houses | Loads legacy Cleaner assignments and checks that both keep cleaning. Tests the merchant purchase, place and pack, green models, hoe strikes and seed use. |
+| `gardener-reload` | The copied save from `gardener` with the mod installed | Restores the bought house and plants the pending plot after restocking. Verifies that stock cleaners keep their role alongside pending work. |
 | `gardener-uninstall` | The saved world from `gardener-reload` with the mod DLL removed | The game loads the house, planted crops and stored harvest. |
 | `coop` and `guest` | Separate host and guest game folders under one parent. Put the mod in the host profile only, with the test driver in each. Start the guest first and wait for `coop-guest-menu-ready` before launching the host. | The guest joins, sees the stock owl move and the harvest replicate, collects two corn, disconnects, and rejoins. |
 

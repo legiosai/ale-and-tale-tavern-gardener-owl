@@ -2,9 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using BepInEx;
 using BepInEx.Bootstrap;
 using HarmonyLib;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 namespace GardenHarvesterOwl.GameProbe;
@@ -20,6 +23,17 @@ public sealed partial class ProbePlugin
         object world = GetWorld();
         foreach (var frame in WaitFor(() => Houses().Length == 2 && GardenManager.Instance != null
             && PlayerInventory.Instance?.inventory != null, "the copied garden and player inventory")) yield return frame;
+
+        GardenBed[] beds = GardenManager.Instance.gardenBeds;
+        GardenBed corn = beds[0];
+        GardenBed carrots = beds[1];
+        FocusBeds(beds, corn);
+        Ripen(corn, CornSeed);
+        float inspectAt = Time.realtimeSinceStartup + 2.5f;
+        foreach (var frame in WaitFor(() => Time.realtimeSinceStartup >= inspectAt, "previous Cleaner assignments to be ignored")) yield return frame;
+        Require(Houses().All(house => !HasWorker(world, house)) && corn.state.Value == GardenBed.State.PlantGrown,
+            "An older assignment switched a Cleaner Owl to garden work.");
+        Logger.LogInfo("PROBE PASS legacy Cleaner assignments were ignored and both native cleaners stayed in their stock role");
 
         Furniture stock = Houses()[1];
         Vector3 placement = stock.transform.position;
@@ -75,12 +89,11 @@ public sealed partial class ProbePlugin
             && owl.interactive.ObjectTitle == "Gardener Owl" && HasGreenMap(owl, "coat_low") && HasGreenMap(owl, "hood_low")
             && house.GetComponentsInChildren<Renderer>().Any(renderer => renderer.sharedMaterial?.name == "Owls_Nest1" && HasGreenMap(renderer)),
             "the green house, cloak and hood and their labels", 10)) yield return frame;
-        Require(!HasGreenMap((HelperCleaner)Houses().Single(x => x != house).helperHouse.helper, "coat_low"), "The stock cleaner changed color.");
+        Furniture cleanerHouse = Houses().Single(x => x != house);
+        Require(!HasWorker(world, cleanerHouse) && !HasGreenMap((HelperCleaner)cleanerHouse.helperHouse.helper, "coat_low"),
+            "The stock cleaner changed role or color when a gardener joined.");
         Logger.LogInfo("PROBE PASS bought house is green and auto-assigned; packing and replacing preserves it");
 
-        GardenBed[] beds = GardenManager.Instance.gardenBeds;
-        GardenBed corn = beds[0];
-        GardenBed carrots = beds[1];
         foreach (GardenBed bed in beds)
             bed.state.Value = GardenBed.State.Abandoned;
         FocusBeds(beds, corn);
@@ -104,8 +117,8 @@ public sealed partial class ProbePlugin
             && storage.GetItemAmount(Carrot) == 2, "the owl to till the carrot bed without carrot seeds", 35)) yield return frame;
         Require(carrots.currentSeedId.Value == 0 && storage.GetItemAmount(CarrotSeed) == 0, "The owl planted without a matching seed.");
         SaveManager.Instance.SaveGame();
-        string roles = Directory.GetFiles(Path.Combine(Paths.ConfigPath, "GardenHarvesterOwl"), "*.json").Select(File.ReadAllText).Single();
-        Require(roles.Contains("\"seedId\": 1202"), "The cleaned plot's pending seed was not saved.");
+        string plots = Directory.GetFiles(Path.Combine(Paths.ConfigPath, "GardenHarvesterOwl"), "*.json").Select(File.ReadAllText).Single();
+        Require(plots.Contains("\"seedId\": 1202") && !plots.Contains("\"houses\""), "The save should retain the pending plot without Cleaner assignments.");
         Logger.LogInfo("PROBE PASS without seed the bed stays plowed, harvest stays in storage, and the pending crop is saved");
     }
 
@@ -126,6 +139,8 @@ public sealed partial class ProbePlugin
             () => $"the pending carrot seed to plant after restocking ({Status(world, house)})", 40)) yield return frame;
         Require(bed.currentSeedId.Value == CarrotSeed && storage.GetItemAmount(CarrotSeed) == 1 && storage.GetItemAmount(Carrot) == 2,
             "Restocking a previously tilled bed used the wrong seed count or changed produce.");
+        Require(Houses().Where(member => member != house).All(member => !HasWorker(world, member)),
+            "An older assignment was restored alongside pending work.");
         SaveManager.Instance.SaveGame();
         Logger.LogInfo("PROBE PASS new launch restored the purchased house and replanted the waiting plot after restocking");
     }
@@ -152,6 +167,28 @@ public sealed partial class ProbePlugin
         return default;
     }
     private static bool IsPlacedGardener(Furniture house) => house.itemData.id == 1156 && house.reliability.Value != 0;
+
+    private void StageLegacyAssignments()
+    {
+        string save = Path.Combine(Application.dataPath, "saves", SaveSlot + ".sav");
+        byte[] data = File.ReadAllBytes(save);
+        var source = JObject.Parse(Encoding.UTF8.GetString(Convert.FromBase64String(Encoding.ASCII.GetString(data))));
+        var houses = new JArray(source["devices"]!.Children<JObject>()
+            .Where(device => device.Value<int>("itemDataId") == 1156 && device.Value<int>("reliability") == 0)
+            .Select(device => new JObject { ["furnitureId"] = device.Value<int>("id"), ["containerId"] = device["container"]!.Value<int>("id") }));
+        Require(houses.Count > 0, "The upgrade fixture must include a stock Cleaner Owl House.");
+
+        using var sha = SHA256.Create();
+        string Hash(byte[] bytes) => BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
+        string directory = Path.Combine(Paths.ConfigPath, "GardenHarvesterOwl");
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, Hash(Encoding.UTF8.GetBytes(SaveSlot.ToUpperInvariant())) + ".json");
+        var snapshot = mode == "gardener-reload" ? JObject.Parse(File.ReadAllText(path)) : new JObject();
+        snapshot["version"] = 1;
+        snapshot["saveFingerprint"] = Hash(data);
+        snapshot["houses"] = houses;
+        File.WriteAllText(path, snapshot.ToString());
+    }
 
     private static ShopItemUI FindListing(ShopUI shop, ushort id) => shop.GetComponentsInChildren<ShopItemUI>()
         .Single(row => ((ItemData)AccessTools.Field(typeof(ShopItemUI), "_itemData").GetValue(row))?.id == id);

@@ -10,71 +10,44 @@ internal sealed class GardenerAppearance : MonoBehaviour
     private const ushort HoeItem = 302;
     private static readonly string[] ColorMaps = { "_BaseMap", "_BaseColorMap", "_MainTex" };
     private static readonly Dictionary<Texture, Texture2D> GreenTextures = new();
-    private readonly Dictionary<Renderer, MaterialPropertyBlock> originals = new();
     private Furniture? house;
     private HelperCleaner? owl;
     private Interactive? interaction;
-    private string originalTitle = "";
-    private string originalContainerName = "";
     private Transform? hoe;
     private float swingStart;
     private bool hasHoe;
-    private bool green;
+    private bool initialized;
 
     private void LateUpdate()
     {
-        if (owl != null && house == null && owl.containerRef.containerNet != null)
-            house = owl.containerRef.containerNet.GetComponentInParent<Furniture>();
-        if (house == null)
-            return;
-
-        bool active = GardenerItem.IsGardener(house) || Plugin.World?.WantsHarvester(house) == true;
-        if (green != active)
+        if (!initialized)
         {
-            green = active;
-            SetAppearance(active);
+            if (owl != null && house == null && owl.containerRef.containerNet != null)
+                house = owl.containerRef.containerNet.GetComponentInParent<Furniture>();
+            if (house == null || !house.IsSpawned)
+                return;
+            if (!GardenerItem.IsGardener(house))
+            {
+                enabled = false;
+                return;
+            }
+            SetAppearance(house);
+            initialized = true;
         }
         if (owl != null)
-            MoveHoe(active && (owl.IsServer ? HarvesterWorld.WorkerFor(owl)?.IsHoeing == true : owl.animator.GetBool("Cleanup")));
+            MoveHoe(owl.IsServer ? HarvesterWorld.WorkerFor(owl)?.IsHoeing == true : owl.animator.GetBool("Cleanup"));
     }
 
-    private void SetAppearance(bool active)
+    private void SetAppearance(Furniture gardenerHouse)
     {
-        if (owl == null && house != null && house.IsServer && house.helperHouse.container is ContainerNet storage)
+        if (owl == null && gardenerHouse.IsServer && gardenerHouse.helperHouse.container is ContainerNet storage)
+            storage.contName.Value = GardenerItem.OwlName;
+        if (interaction != null)
+            interaction.ObjectTitle = owl != null ? GardenerItem.OwlName : GardenerItem.HouseName;
+        foreach (Renderer renderer in GetComponentsInChildren<Renderer>(true))
         {
-            if (active)
-            {
-                originalContainerName = storage.contName.Value.ToString();
-                storage.contName.Value = GardenerItem.OwlName;
-            }
-            else if (storage.contName.Value.ToString() == GardenerItem.OwlName)
-            {
-                storage.contName.Value = originalContainerName;
-            }
-        }
-        if (active)
-        {
-            if (interaction != null)
-            {
-                originalTitle = interaction.ObjectTitle;
-                interaction.ObjectTitle = owl != null ? GardenerItem.OwlName : GardenerItem.HouseName;
-            }
-            foreach (Renderer renderer in GetComponentsInChildren<Renderer>(true))
-            {
-                if (owl == null ? renderer.sharedMaterial?.name == "Owls_Nest1" : renderer.name is "hood_low" or "coat_low")
-                    Paint(renderer);
-            }
-        }
-        else
-        {
-            if (interaction != null)
-                interaction.ObjectTitle = originalTitle;
-            foreach (var pair in originals)
-            {
-                if (pair.Key != null)
-                    pair.Key.SetPropertyBlock(pair.Value);
-            }
-            originals.Clear();
+            if (owl == null ? renderer.sharedMaterial?.name == "Owls_Nest1" : renderer.name is "hood_low" or "coat_low")
+                Paint(renderer);
         }
     }
 
@@ -83,9 +56,6 @@ internal sealed class GardenerAppearance : MonoBehaviour
         Material material = renderer.sharedMaterial;
         if (material == null)
             return;
-        var original = new MaterialPropertyBlock();
-        renderer.GetPropertyBlock(original);
-        originals.Add(renderer, original);
         var paint = new MaterialPropertyBlock();
         renderer.GetPropertyBlock(paint);
         foreach (string map in ColorMaps)
@@ -224,7 +194,7 @@ internal sealed class GardenerAppearance : MonoBehaviour
     {
         private static void Postfix(Furniture __instance)
         {
-            if (!HarvesterWorld.IsCleanerHouse(__instance))
+            if (!GardenerItem.IsGardener(__instance))
                 return;
             GardenerAppearance visual = __instance.gameObject.AddComponent<GardenerAppearance>();
             visual.house = __instance;

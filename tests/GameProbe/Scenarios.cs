@@ -26,7 +26,7 @@ public sealed partial class ProbePlugin
         HelperCleaner owl = (HelperCleaner)house.helperHouse.helper;
         GardenBed[] beds = GardenManager.Instance.gardenBeds;
         Require(beds.Length == 30, "Expected the copied 30-bed garden.");
-        Clear(storage);
+        VerifyRegularVarieties(storage, beds);
         GardenBed nearest = beds[0];
         GardenBed farthest = beds[29];
         FocusBeds(beds, nearest);
@@ -43,7 +43,7 @@ public sealed partial class ProbePlugin
         };
 
         Time.timeScale = 2.5f;
-        Assign(world, house, true);
+        MarkAsGardener(house);
         foreach (var frame in WaitFor(() => storage.GetItemAmount(Corn) == 2, () => $"corn harvest ({Status(world, house)})", 38)) yield return frame;
         Require(nearest.state.Value == GardenBed.State.Abandoned && nearest.currentSeedId.Value == 0, "Corn bed did not reset.");
         Require(cornHarvests == 1 && besideAtHarvest && PlayerInventory.Instance.inventory.GetItemAmount(Corn) == playerCorn,
@@ -62,24 +62,23 @@ public sealed partial class ProbePlugin
         foreach (var frame in TestEntireGarden(world, house, beds)) yield return frame;
 
         SaveManager.Instance.SaveGame();
-        string[] roleFiles = Directory.GetFiles(Path.Combine(Paths.ConfigPath, "GardenHarvesterOwl"), "*.json");
-        Require(roleFiles.Length == 1 && File.ReadAllText(roleFiles[0]).Contains("\"furnitureId\""),
-            "The role file must contain the actual house assignment.");
-        Logger.LogInfo("PROBE PASS native save and role file");
+        string[] plotFiles = Directory.GetFiles(Path.Combine(Paths.ConfigPath, "GardenHarvesterOwl"), "*.json");
+        Require(plotFiles.Length == 1 && File.ReadAllText(plotFiles[0]).Contains("\"plots\""),
+            "The plot file must contain the pending garden work.");
+        Logger.LogInfo("PROBE PASS native save and pending plot file");
     }
 
     private IEnumerable<object?> TestReload()
     {
         object world = GetWorld();
-        foreach (var frame in WaitFor(() => Houses().Length > 0 && Status(world, Houses()[0]).StartsWith("Harvester", StringComparison.Ordinal), "saved role to restore"))
+        foreach (var frame in WaitFor(() => Houses().Length == 2 && Houses().All(house => HasWorker(world, house)), "saved garden houses to resume their role"))
             yield return frame;
         Furniture[] houses = Houses();
-        Require(houses.Length == 2 && Status(world, houses[1]) == "Cleaner", "An unassigned cleaner was changed on reload.");
         Require(Total(houses, Corn) == 30 && Total(houses, Carrot) == 30 && GardenManager.Instance.gardenBeds.All(IsCleared),
             "Reloaded storage changed.");
         TestMismatchedSaveFingerprint();
         SaveManager.Instance.SaveGame();
-        Logger.LogInfo("PROBE PASS saved role and crop quantities across reload");
+        Logger.LogInfo("PROBE PASS purchased houses and crop quantities across reload");
     }
 
     private IEnumerable<object?> TestUninstall()
@@ -105,8 +104,14 @@ public sealed partial class ProbePlugin
             ?? throw new InvalidOperationException("The production plugin did not initialize.");
     }
 
-    private static void Assign(object world, Furniture house, bool enabled) =>
-        AccessTools.Method(world.GetType(), "SetHarvester").Invoke(world, new object[] { house, enabled });
+    private static void MarkAsGardener(Furniture house)
+    {
+        var item = AccessTools.TypeByName("GardenHarvesterOwl.GardenerItem");
+        house.reliability.Value = (ushort)AccessTools.Field(item, "Marker").GetRawConstantValue();
+    }
+
+    private static bool HasWorker(object world, Furniture house) => house.helperHouse.helper is HelperCleaner owl
+        && AccessTools.Method(world.GetType(), "WorkerFor").Invoke(null, new object[] { owl }) != null;
 
     private static string Status(object world, Furniture house) =>
         (string)AccessTools.Method(world.GetType(), "StatusOf").Invoke(world, new object[] { house });

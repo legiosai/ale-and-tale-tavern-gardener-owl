@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Security.Cryptography;
 using BepInEx;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -13,11 +12,10 @@ namespace GardenHarvesterOwl;
 public sealed class Plugin : BaseUnityPlugin
 {
     internal const string Id = "dev.valen.gardenharvesterowl";
-    internal const string Version = "0.2.0";
+    internal const string Version = "0.2.1";
     private const string SupportedAssembly = "fb4ed6f913cfa48064d9b7c4b8a583c04113e0c827792e2ab329e5d12b7f5e44";
 
     private Harmony? harmony;
-    private ConfigEntry<KeyboardShortcut>? roleShortcut;
     private string? tooltip;
     private GUIStyle? tooltipStyle;
 
@@ -37,10 +35,8 @@ public sealed class Plugin : BaseUnityPlugin
                 return;
             }
 
-            roleShortcut = Config.Bind("Controls", "ToggleHarvester", new KeyboardShortcut(KeyCode.H, KeyCode.LeftAlt),
-                "While looking at a cleaner house during play, switch between Cleaner and Harvester.");
-            var roles = new RoleStore(Path.Combine(Paths.ConfigPath, "GardenHarvesterOwl"), Logger);
-            World = new HarvesterWorld(roles, Logger);
+            var plots = new PlotStore(Path.Combine(Paths.ConfigPath, "GardenHarvesterOwl"), Logger);
+            World = new HarvesterWorld(plots, Logger);
             harmony = new Harmony(Id);
             harmony.PatchAll(typeof(Plugin).Assembly);
             Logger.LogInfo($"{GardenerItem.OwlName} {Version} ready for Ale & Tale Tavern {Application.version} (Steam build 26671410).");
@@ -56,7 +52,7 @@ public sealed class Plugin : BaseUnityPlugin
     private void Update()
     {
         tooltip = null;
-        if (World == null || roleShortcut == null)
+        if (World == null)
             return;
         World.Tick();
         if (!HarvesterWorld.IsHost || PlayerInventory.Instance == null || PlayerInput.Instance == null
@@ -67,23 +63,8 @@ public sealed class Plugin : BaseUnityPlugin
         if (!inventory.interactiveInSight || inventory.interactive == null)
             return;
         var house = inventory.interactive.GetComponentInParent<Furniture>();
-        if (!HarvesterWorld.IsCleanerHouse(house))
-            return;
-
         if (GardenerItem.IsGardener(house))
-        {
             tooltip = World.StatusOf(house);
-            return;
-        }
-
-        bool assigned = World.WantsHarvester(house);
-        if (roleShortcut.Value.IsDown())
-        {
-            World.SetHarvester(house, !assigned);
-            assigned = !assigned;
-        }
-        string nextRole = assigned ? "Cleaner" : "Harvester";
-        tooltip = $"{World.StatusOf(house)}\n{roleShortcut.Value}  Switch to {nextRole}";
     }
 
     private void OnGUI()
@@ -101,7 +82,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void OnDestroy()
     {
-        World?.ResetRoles();
+        World?.Reset();
         World = null;
         harmony?.UnpatchSelf();
     }

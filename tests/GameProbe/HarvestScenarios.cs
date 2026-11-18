@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -90,7 +89,7 @@ public sealed partial class ProbePlugin
         Furniture[] houses = Houses();
         Require(houses.Length == 2, "Stage a second stock cleaner house in the copied save for the reservation check.");
         Furniture other = houses.Single(x => x != primary);
-        Require(Status(world, other) == "Cleaner", "The second house did not begin as Cleaner.");
+        Require(!HasWorker(world, other), "The stock cleaner took on garden work.");
         if (FurnitureManager.Instance.furniture.Values.Any(f => f.itemData.id == 1155))
             Require(FurnitureManager.Instance.furniture.Values.First(f => f.itemData.id == 1155).helperHouse.helper is HelperWaiter,
                 "The stock waiter changed.");
@@ -104,15 +103,15 @@ public sealed partial class ProbePlugin
             Ripen(beds[i], i < 15 ? (ushort)1204 : (ushort)1202);
         int events = 0;
         Game.Instance.onGameEvent += (e, item, _) => { if (e == GameEvent.TakePlant && (item == Corn || item == Carrot)) events++; };
-        Assign(world, other, true);
+        MarkAsGardener(other);
         foreach (var frame in WaitFor(() => beds.All(IsCleared), () => $"all 30 beds ({events} harvests, {Status(world, primary)}, {Status(world, other)})", 90)) yield return frame;
         Require(events == 30 && Total(houses, Corn) == 30 && Total(houses, Carrot) == 30,
             "Whole-garden yield differs from 30 carrots and 30 corn across 30 distinct harvests.");
         Require(houses.All(x => x.helperHouse.container.GetItemAmount(Corn) + x.helperHouse.container.GetItemAmount(Carrot) > 0),
             "Both workers must complete at least one crop.");
-        Assign(world, other, false);
-        foreach (var frame in WaitFor(() => Status(world, other) == "Cleaner", "second owl to return to its stock role", 35)) yield return frame;
-        Logger.LogInfo("PROBE PASS two owls harvest all 30 beds once, 30 carrots and 30 corn, second owl switched back to Cleaner");
+        other.helperHouse.isHelperActive.Value = false;
+        foreach (var frame in WaitFor(() => Status(world, other).Contains("Paused"), "second gardener to pause", 35)) yield return frame;
+        Logger.LogInfo("PROBE PASS two gardeners harvest all 30 beds once, 30 carrots and 30 corn");
     }
 
     private static bool IsAbandoned(GardenBed bed) => bed.state.Value == GardenBed.State.Abandoned;
@@ -135,6 +134,22 @@ public sealed partial class ProbePlugin
         var harvest = AccessTools.TypeByName("GardenHarvesterOwl.Harvest");
         Require(harvest.Assembly == assembly, "Unexpected harvest implementation.");
         return AccessTools.Method(harvest, "TryCollect").Invoke(null, new object[] { bed, storage, Logger })!.ToString();
+    }
+
+    private void VerifyRegularVarieties(ContainerNet storage, GardenBed[] beds)
+    {
+        GardenBed bed = beds[0];
+        FocusBeds(beds, bed);
+        Clear(storage);
+        (ushort seed, ushort produce)[] crops = { (1201, 10), (1202, 15), (1203, 16), (1204, 17), (1205, 18) };
+        foreach (var crop in crops)
+        {
+            Ripen(bed, crop.seed);
+            Require(CollectForTest(bed, storage) == "Collected" && IsAbandoned(bed)
+                && storage.GetItemAmount(crop.produce) == 2, $"Wrong yield or item for seed {crop.seed}.");
+        }
+        Clear(storage);
+        Logger.LogInfo("PROBE PASS actual harvest adapter for all five regular crop varieties");
     }
 
     private void ProveRollback(GardenBed bed, ContainerNet storage)
@@ -184,14 +199,12 @@ public sealed partial class ProbePlugin
         string backup = Directory.GetFiles(saves, SaveSlot + "_*.bk").OrderBy(File.GetLastWriteTimeUtc).First();
         string backupName = Path.GetFileNameWithoutExtension(backup);
         string date = backupName.Substring(SaveSlot.Length + 1);
-        var type = AccessTools.TypeByName("GardenHarvesterOwl.RoleStore");
+        var type = AccessTools.TypeByName("GardenHarvesterOwl.PlotStore");
         object store = Activator.CreateInstance(type,
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
             new object[] { Path.Combine(Paths.ConfigPath, "GardenHarvesterOwl"), Logger }, null)!;
-        object?[] arguments = { SaveSlot, date, true, null };
-        var restored = (IEnumerable)AccessTools.Method(type, "Load").Invoke(store, arguments);
-        Require(!restored.GetEnumerator().MoveNext() && arguments[3] is Array { Length: 0 },
-            "An older save restored an assignment or pending plot from the newer world.");
+        var restored = (Array)AccessTools.Method(type, "Load").Invoke(store, new object[] { SaveSlot, date, true });
+        Require(restored.Length == 0, "An older save restored a pending plot from the newer world.");
         Logger.LogInfo("PROBE PASS older save fingerprint ignored");
     }
 }

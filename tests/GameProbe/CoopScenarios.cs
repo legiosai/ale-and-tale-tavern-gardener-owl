@@ -22,11 +22,13 @@ public sealed partial class ProbePlugin
         Clear(storage);
         FocusBeds(beds, bed);
         Ripen(bed, 1204);
+        house.helperHouse.isHelperActive.Value = false;
+        MarkAsGardener(house);
         Signal("host-ready");
         foreach (var frame in WaitFor(() => SignalExists("guest-ready") && NetworkManager.Singleton.ConnectedClientsIds.Count == 2,
             "a guest without the harvester plugin", 70)) yield return frame;
 
-        Assign(world, house, true);
+        house.helperHouse.isHelperActive.Value = true;
         foreach (var frame in WaitFor(() => SignalExists("guest-collected"), () => $"guest observation and transfer ({Status(world, house)}, corn={storage.GetItemAmount(Corn)})", 47)) yield return frame;
         Require(IsCleared(bed) && storage.GetItemAmount(Corn) == 0, "The host and guest disagreed after collection.");
         foreach (var frame in WaitFor(() => SignalExists("guest-rejoined"), "guest to reconnect and validate the saved network state", 50)) yield return frame;

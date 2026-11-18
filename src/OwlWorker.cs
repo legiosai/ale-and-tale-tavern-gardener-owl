@@ -36,13 +36,10 @@ internal sealed class OwlWorker : StateBase<HelperCleanerStateMachine>
     private float tripDeadline;
     private float lastProgressAt;
     private Vector3 lastProgressFrom;
-    private bool retiring;
     private bool faulted;
-    private bool homeBlocked;
     private float nextSearch;
 
     internal string Status { get; private set; } = "Waiting for ripe crops";
-    internal bool CanRestoreCleaner => phase == Phase.Perched || (phase == Phase.Grounded && homeBlocked);
     internal bool IsHoeing => phase == Phase.Tilling;
 
     internal OwlWorker(HelperCleanerStateMachine machine, ContainerNet house,
@@ -77,15 +74,6 @@ internal sealed class OwlWorker : StateBase<HelperCleanerStateMachine>
         bed = null;
     }
 
-    internal void SetRetiring(bool value)
-    {
-        retiring = value;
-        if (value)
-            CancelWork("Returning to Cleaner");
-        else
-            nextSearch = 0f;
-    }
-
     internal void SetPaused(bool value)
     {
         if (value)
@@ -94,7 +82,7 @@ internal sealed class OwlWorker : StateBase<HelperCleanerStateMachine>
             nextSearch = 0f;
     }
 
-    private bool CanHarvest => owl.isActivated && !retiring && !faulted && owl.CanMove();
+    private bool CanHarvest => owl.isActivated && !faulted && owl.CanMove();
 
     public override void ExecutePerSecond()
     {
@@ -103,7 +91,7 @@ internal sealed class OwlWorker : StateBase<HelperCleanerStateMachine>
 
         if (!CanHarvest)
         {
-            Status = retiring ? "Returning to Cleaner" : faulted ? "Harvest paused after an error"
+            Status = faulted ? "Harvest paused after an error"
                 : owl.isActivated ? "Inventory open" : "Paused";
             if (phase == Phase.Grounded && owl.CanMove())
                 WalkHome();
@@ -273,7 +261,6 @@ internal sealed class OwlWorker : StateBase<HelperCleanerStateMachine>
             HomeBlocked();
             return;
         }
-        homeBlocked = false;
         if ((owl.transform.position - landing).sqrMagnitude <= ArrivalTolerance * ArrivalTolerance)
         {
             BeginHop(owl.defaultPos, Phase.HopIn);
@@ -328,7 +315,6 @@ internal sealed class OwlWorker : StateBase<HelperCleanerStateMachine>
 
     private void SetPerched()
     {
-        homeBlocked = false;
         phase = Phase.Perched;
         owl.animator.SetBool("NestSit", true);
         owl.agent.enabled = false;
@@ -475,7 +461,6 @@ internal sealed class OwlWorker : StateBase<HelperCleanerStateMachine>
     {
         StopWalking();
         phase = Phase.Grounded;
-        homeBlocked = true;
         nextSearch = Time.time + RetrySeconds;
         Status = "Path blocked";
     }

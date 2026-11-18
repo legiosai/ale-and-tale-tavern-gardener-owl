@@ -11,12 +11,6 @@ namespace GardenHarvesterOwl;
 
 internal sealed class HarvesterWorld
 {
-    private sealed class Assignment
-    {
-        internal bool Desired = true;
-        internal OwlWorker? Worker;
-    }
-
     internal const ushort CleanerHouseItem = 1156;
 
     private static readonly AccessTools.FieldRef<HelperCleaner, HelperCleanerStateMachine> Machine =
@@ -26,20 +20,19 @@ internal sealed class HarvesterWorld
     private static readonly AccessTools.FieldRef<SaveManager, bool> BinarySave =
         AccessTools.FieldRefAccess<SaveManager, bool>("_useBinSerialization");
 
-    private readonly RoleStore roles;
+    private readonly PlotStore plots;
     private readonly ManualLogSource log;
-    private readonly Dictionary<Furniture, Assignment> assignments = new();
+    private readonly Dictionary<Furniture, OwlWorker> workers = new();
     private readonly Dictionary<GardenBed, OwlWorker> reservations = new();
     private readonly Dictionary<GardenBed, ushort> pendingPlots = new();
     private readonly List<Furniture> remove = new();
-    private HashSet<RoleStore.HouseKey> restore = new();
-    private RoleStore.SavedPlot[] restorePlots = Array.Empty<RoleStore.SavedPlot>();
+    private PlotStore.SavedPlot[] restorePlots = Array.Empty<PlotStore.SavedPlot>();
     private FurnitureManager? furnitureManager;
     private float scanAt;
 
-    internal HarvesterWorld(RoleStore roles, ManualLogSource log)
+    internal HarvesterWorld(PlotStore plots, ManualLogSource log)
     {
-        this.roles = roles;
+        this.plots = plots;
         this.log = log;
     }
 
@@ -47,27 +40,23 @@ internal sealed class HarvesterWorld
         && NetworkManager.Singleton.IsListening && Master.Instance != null && Master.Instance.isHostReady
         && !Master.Instance.isPlaySceneQuitting;
 
-    internal void LoadRoles(SaveManager manager, string slot, string backupDate)
+    internal void LoadPlots(SaveManager manager, string slot, string backupDate)
     {
         Clear();
-        restore = roles.Load(slot, backupDate, BinarySave(manager), out restorePlots);
+        restorePlots = plots.Load(slot, backupDate, BinarySave(manager));
     }
 
-    internal void ResetRoles()
+    internal void Reset()
     {
         Clear();
-        restore.Clear();
-        restorePlots = Array.Empty<RoleStore.SavedPlot>();
+        restorePlots = Array.Empty<PlotStore.SavedPlot>();
     }
 
-    internal void SaveRoles(SaveManager manager, string slot)
+    internal void SavePlots(SaveManager manager, string slot)
     {
         if (!IsHost)
             return;
-        var keys = assignments.Where(pair => pair.Value.Desired && !GardenerItem.IsGardener(pair.Key)
-                && TryGetParts(pair.Key, out _, out _))
-            .Select(pair => new RoleStore.HouseKey(pair.Key));
-        var plots = new List<RoleStore.SavedPlot>(restorePlots);
+        var saved = new List<PlotStore.SavedPlot>(restorePlots);
         GardenBed[]? beds = GardenManager.Instance?.gardenBeds;
         if (beds != null)
         {
@@ -75,20 +64,17 @@ internal sealed class HarvesterWorld
             {
                 GardenBed bed = beds[i];
                 if (GardenTending.IsEmpty(bed) && pendingPlots.TryGetValue(bed, out ushort seedId))
-                    plots.Add(new RoleStore.SavedPlot(i, seedId));
+                    saved.Add(new PlotStore.SavedPlot(i, seedId));
             }
         }
-        roles.Save(slot, BinarySave(manager), keys.Concat(restore).Distinct(), plots);
+        plots.Save(slot, BinarySave(manager), saved);
     }
 
-    internal static bool IsCleanerHouse(Furniture house) => house != null && house.IsSpawned
-        && house.itemData != null && house.itemData.id == CleanerHouseItem && house.helperHouse != null;
-
-    internal static bool TryGetParts(Furniture house, out HelperCleaner owl, out ContainerNet storage)
+    private static bool TryGetParts(Furniture house, out HelperCleaner owl, out ContainerNet storage)
     {
         owl = null!;
         storage = null!;
-        if (!IsCleanerHouse(house) || house.helperHouse.helper is not HelperCleaner cleaner || cleaner == null
+        if (!GardenerItem.IsGardener(house) || house.helperHouse.helper is not HelperCleaner cleaner || cleaner == null
             || !cleaner.IsSpawned || !cleaner.IsServer || cleaner.containerRef == null)
             return false;
         ContainerNet container = house.helperHouse.container;
@@ -99,38 +85,15 @@ internal sealed class HarvesterWorld
         return true;
     }
 
-    internal string StatusOf(Furniture house)
-    {
-        if (!assignments.TryGetValue(house, out Assignment assignment))
-            return GardenerItem.IsGardener(house) ? GardenerItem.OwlName + " · Getting ready" : "Cleaner";
-        if (!assignment.Desired)
-            return "Returning to Cleaner";
-        string role = GardenerItem.IsGardener(house) ? GardenerItem.OwlName : "Harvester";
-        return role + " · " + (assignment.Worker?.Status ?? "Finishing current work");
-    }
-
-    internal bool WantsHarvester(Furniture house) => assignments.TryGetValue(house, out Assignment assignment) && assignment.Desired;
-
-    internal void SetHarvester(Furniture house, bool enabled)
-    {
-        if (!IsHost || !IsCleanerHouse(house))
-            return;
-        if (!assignments.TryGetValue(house, out Assignment assignment))
-        {
-            if (enabled)
-                assignments.Add(house, new Assignment());
-            return;
-        }
-        assignment.Desired = enabled;
-        assignment.Worker?.SetRetiring(!enabled);
-    }
+    internal string StatusOf(Furniture house) => GardenerItem.OwlName + " · "
+        + (workers.TryGetValue(house, out OwlWorker worker) ? worker.Status : "Getting ready");
 
     internal void Tick()
     {
         if (!IsHost || FurnitureManager.Instance == null)
         {
             if (!ReferenceEquals(furnitureManager, null))
-                ResetRoles();
+                Reset();
             return;
         }
 
@@ -141,72 +104,44 @@ internal sealed class HarvesterWorld
             scanAt = 0f;
         }
 
-        if (Time.time >= scanAt)
-        {
-            scanAt = Time.time + 0.5f;
-            foreach (Furniture house in furnitureManager.furniture.Values)
-            {
-                if (TryGetParts(house, out _, out _) && (restore.Remove(new RoleStore.HouseKey(house))
-                    || (GardenerItem.IsGardener(house) && !assignments.ContainsKey(house))))
-                    SetHarvester(house, true);
-            }
-            RestorePlots();
-        }
+        if (Time.time < scanAt)
+            return;
+        scanAt = Time.time + 0.5f;
+        RestorePlots();
 
         remove.Clear();
-        foreach (var pair in assignments)
+        foreach (var pair in workers)
         {
-            Furniture house = pair.Key;
-            Assignment job = pair.Value;
-            if (!IsCleanerHouse(house))
+            if (!TryGetParts(pair.Key, out HelperCleaner owl, out _) || WorkerFor(owl) != pair.Value)
             {
-                job.Worker?.ReleaseBed();
-                remove.Add(house);
-                continue;
-            }
-            if (!job.Desired && job.Worker == null)
-            {
-                remove.Add(house);
-                continue;
-            }
-            if (!TryGetParts(house, out HelperCleaner owl, out ContainerNet storage))
-                continue;
-
-            HelperCleanerStateMachine machine = Machine(owl);
-            if (machine == null)
-                continue;
-            if (job.Worker != null && machine.CurrentState != job.Worker)
-            {
-                job.Worker.ReleaseBed();
-                job.Worker = null;
-            }
-            if (job.Desired && job.Worker == null && CanTakeOver(owl, machine))
-            {
-                HelpersManager.Instance.RemoveFromTaskList(owl);
-                job.Worker = new OwlWorker(machine, storage, reservations, pendingPlots, log);
-                ChangeState(owl, machine, job.Worker);
-                log.LogInfo($"House {house.id.Value} assigned {GardenerItem.OwlName}.");
-            }
-            else if (!job.Desired && job.Worker?.CanRestoreCleaner == true)
-            {
-                StateBase<HelperCleanerStateMachine> stock = Vector3.Distance(owl.transform.position, owl.defaultPos) < 0.3f
-                    ? new HelperCleanerNestSittingState(machine, false) : new HelperCleanerMoveToDefaultPosState(machine);
-                ChangeState(owl, machine, stock);
-                if (Navigation.AgentReady(owl.agent))
-                    owl.UpdateAgentStopped();
-                remove.Add(house);
-                log.LogInfo($"House {house.id.Value} returned to Cleaner.");
+                pair.Value.ReleaseBed();
+                remove.Add(pair.Key);
             }
         }
         foreach (Furniture house in remove)
-            assignments.Remove(house);
+            workers.Remove(house);
+
+        foreach (Furniture house in furnitureManager.furniture.Values)
+        {
+            if (workers.ContainsKey(house) || !TryGetParts(house, out HelperCleaner owl, out ContainerNet storage))
+                continue;
+
+            HelperCleanerStateMachine machine = Machine(owl);
+            if (machine == null || !CanTakeOver(owl, machine))
+                continue;
+            HelpersManager.Instance.RemoveFromTaskList(owl);
+            var worker = new OwlWorker(machine, storage, reservations, pendingPlots, log);
+            ChangeState(owl, machine, worker);
+            workers.Add(house, worker);
+            log.LogInfo($"House {house.id.Value} started gardening.");
+        }
     }
 
     private void Clear()
     {
-        foreach (Assignment job in assignments.Values)
-            job.Worker?.ReleaseBed();
-        assignments.Clear();
+        foreach (OwlWorker worker in workers.Values)
+            worker.ReleaseBed();
+        workers.Clear();
         reservations.Clear();
         pendingPlots.Clear();
         furnitureManager = null;
@@ -217,13 +152,13 @@ internal sealed class HarvesterWorld
         GardenBed[]? beds = GardenManager.Instance?.gardenBeds;
         if (restorePlots.Length == 0 || beds == null || beds.Any(bed => bed == null || !bed.IsSpawned))
             return;
-        foreach (RoleStore.SavedPlot plot in restorePlots)
+        foreach (PlotStore.SavedPlot plot in restorePlots)
         {
             if (plot.bedIndex >= 0 && plot.bedIndex < beds.Length && GardenTending.IsRegularSeed(plot.seedId)
                 && GardenTending.IsEmpty(beds[plot.bedIndex]))
                 pendingPlots[beds[plot.bedIndex]] = plot.seedId;
         }
-        restorePlots = Array.Empty<RoleStore.SavedPlot>();
+        restorePlots = Array.Empty<PlotStore.SavedPlot>();
     }
 
     private static bool CanTakeOver(HelperCleaner owl, HelperCleanerStateMachine machine) =>

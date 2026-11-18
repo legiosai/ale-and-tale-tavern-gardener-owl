@@ -18,7 +18,7 @@ def main() -> None:
     metadata = {
         'name': 'Gardener Owl',
         'author': 'Legios',
-        'version': '0.2.0',
+        'version': '0.2.1',
         'tested_game_build': 26671410,
         'loader': 'BepInEx 5.4.23.5 x64',
         'plugin': name,

@@ -10,25 +10,8 @@ using UnityEngine;
 
 namespace GardenHarvesterOwl;
 
-internal sealed class RoleStore
+internal sealed class PlotStore
 {
-    [Serializable]
-    internal struct HouseKey : IEquatable<HouseKey>
-    {
-        public ushort furnitureId;
-        public ushort containerId;
-
-        internal HouseKey(Furniture house)
-        {
-            furnitureId = house.id.Value;
-            containerId = house.helperHouse.container.id.Value;
-        }
-
-        public bool Equals(HouseKey other) => furnitureId == other.furnitureId && containerId == other.containerId;
-        public override bool Equals(object? obj) => obj is HouseKey key && Equals(key);
-        public override int GetHashCode() => (furnitureId << 16) | containerId;
-    }
-
     [Serializable]
     internal struct SavedPlot
     {
@@ -43,11 +26,10 @@ internal sealed class RoleStore
     }
 
     [Serializable]
-    private sealed class SavedRoles
+    private sealed class SavedPlots
     {
         public int version = 1;
         public string saveFingerprint = "";
-        public HouseKey[] houses = Array.Empty<HouseKey>();
         public SavedPlot[] plots = Array.Empty<SavedPlot>();
     }
 
@@ -59,40 +41,38 @@ internal sealed class RoleStore
         MaxDepth = 8,
     };
 
-    internal RoleStore(string directory, ManualLogSource log)
+    internal PlotStore(string directory, ManualLogSource log)
     {
         this.directory = directory;
         this.log = log;
     }
 
-    internal HashSet<HouseKey> Load(string slot, string backupDate, bool binary, out SavedPlot[] plots)
+    internal SavedPlot[] Load(string slot, string backupDate, bool binary)
     {
-        plots = Array.Empty<SavedPlot>();
         try
         {
-            string rolesPath = RolesPath(slot);
+            string plotsPath = PlotsPath(slot);
             string gameSave = SavePath(slot, backupDate, binary);
-            if (!File.Exists(rolesPath) || !File.Exists(gameSave))
-                return new();
-            if (new FileInfo(rolesPath).Length > 64 * 1024)
-                throw new InvalidDataException("The owl roles file is larger than expected.");
-            SavedRoles? roles = JsonConvert.DeserializeObject<SavedRoles>(File.ReadAllText(rolesPath), JsonSettings);
-            if (roles?.version != 1 || roles.saveFingerprint != HashFile(gameSave) || roles.houses == null)
+            if (!File.Exists(plotsPath) || !File.Exists(gameSave))
+                return Array.Empty<SavedPlot>();
+            if (new FileInfo(plotsPath).Length > 64 * 1024)
+                throw new InvalidDataException("The garden plots file is larger than expected.");
+            SavedPlots? saved = JsonConvert.DeserializeObject<SavedPlots>(File.ReadAllText(plotsPath), JsonSettings);
+            if (saved?.version != 1 || saved.saveFingerprint != HashFile(gameSave))
             {
-                log.LogInfo("Gardening assignments do not match the loaded save.");
-                return new();
+                log.LogInfo("Pending garden plots do not match the loaded save.");
+                return Array.Empty<SavedPlot>();
             }
-            plots = roles.plots ?? Array.Empty<SavedPlot>();
-            return new HashSet<HouseKey>(roles.houses.Where(x => x.furnitureId != 0 && x.containerId != 0));
+            return saved.plots ?? Array.Empty<SavedPlot>();
         }
         catch (Exception error)
         {
-            log.LogWarning($"Owl role assignments could not be loaded. {error.Message}");
-            return new();
+            log.LogWarning($"Pending garden plots could not be loaded. {error.Message}");
+            return Array.Empty<SavedPlot>();
         }
     }
 
-    internal void Save(string slot, bool binary, IEnumerable<HouseKey> houses, IEnumerable<SavedPlot> plots)
+    internal void Save(string slot, bool binary, IEnumerable<SavedPlot> plots)
     {
         string? temporary = null;
         try
@@ -101,24 +81,23 @@ internal sealed class RoleStore
             if (!File.Exists(gameSave))
                 return;
             Directory.CreateDirectory(directory);
-            string rolesPath = RolesPath(slot);
-            temporary = rolesPath + ".tmp";
-            var roles = new SavedRoles
+            string plotsPath = PlotsPath(slot);
+            temporary = plotsPath + ".tmp";
+            var saved = new SavedPlots
             {
                 saveFingerprint = HashFile(gameSave),
-                houses = houses.OrderBy(x => x.furnitureId).ToArray(),
                 plots = plots.OrderBy(x => x.bedIndex).ToArray(),
             };
-            File.WriteAllText(temporary, JsonConvert.SerializeObject(roles, Formatting.Indented, JsonSettings));
-            if (File.Exists(rolesPath))
-                File.Replace(temporary, rolesPath, null);
+            File.WriteAllText(temporary, JsonConvert.SerializeObject(saved, Formatting.Indented, JsonSettings));
+            if (File.Exists(plotsPath))
+                File.Replace(temporary, plotsPath, null);
             else
-                File.Move(temporary, rolesPath);
+                File.Move(temporary, plotsPath);
             temporary = null;
         }
         catch (Exception error)
         {
-            log.LogWarning($"The game saved, but the owl roles file could not be updated. {error.Message}");
+            log.LogWarning($"The game saved, but pending garden plots could not be saved. {error.Message}");
         }
         finally
         {
@@ -131,7 +110,7 @@ internal sealed class RoleStore
         }
     }
 
-    private string RolesPath(string slot) => Path.Combine(directory, Hash(Encoding.UTF8.GetBytes(slot.ToUpperInvariant())) + ".json");
+    private string PlotsPath(string slot) => Path.Combine(directory, Hash(Encoding.UTF8.GetBytes(slot.ToUpperInvariant())) + ".json");
 
     private static string SavePath(string slot, string backupDate, bool binary)
     {
