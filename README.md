@@ -8,7 +8,7 @@ It tends barley, carrots, potatoes, corn, and grapes. It keeps the full harvest 
 
 ## Install and play
 
-Download the ZIP from the [public releases](https://github.com/legiosai/gardener-owl/releases).
+Download the ZIP from the [public releases](https://github.com/legiosai/ale-and-tale-tavern-gardener-owl/releases).
 
 1. Use Steam build **26671410**, which displays game version **1.6.19**. The shipped loader target is **BepInEx 5.4.23.5 x64**. Install it in a mod manager profile or follow the upstream install guide. On Linux or Steam Deck, launch the profile with Proton and configure its `winhttp` DLL override. [BepInEx release](https://github.com/BepInEx/BepInEx/releases/tag/v5.4.23.5) · [Proton setup](https://docs.bepinex.dev/articles/advanced/proton_wine.html)
 2. Merge the ZIP’s `BepInEx` folder into that profile’s game or mod directory. The DLL belongs at `BepInEx/plugins/GardenHarvesterOwl/GardenHarvesterOwl.dll`.
