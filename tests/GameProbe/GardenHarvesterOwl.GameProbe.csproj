@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../../GameReferences.props" />
+  <PropertyGroup>
+    <AssemblyName>GardenHarvesterOwl.GameProbe</AssemblyName>
+    <RootNamespace>GardenHarvesterOwl.GameProbe</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="UnityEngine.PhysicsModule" HintPath="$(GameManagedDir)/UnityEngine.PhysicsModule.dll" Private="false" />
+    <Compile Include="../../src/Navigation.cs" Link="Navigation.cs" />
+  </ItemGroup>
+</Project>
